@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Speech-to-Text</title>
+    <style>
+        /* CSS Styles Embedded Here */
+        :root {
+            --primary-bg: #f4f7f6;
+            --secondary-bg: #ffffff;
+            --accent-color: #007bff;
+            --text-color: #333;
+            --border-color: #dcdcdc;
+            --error-color: #dc3545;
+            --success-color: #28a745;
+            --info-color: #6c757d;
+            --warning-color: #ffc107;
+            --listening-color: #ffc107; /* Color for indicator */
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            background-color: var(--primary-bg);
+            color: var(--text-color);
+        }
+        .container {
+            max-width: 700px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: var(--secondary-bg);
+            box-shadow: 0 1px 5px rgba(0,0,0,0.1);
+            border-radius: 8px;
+        }
+        h1 {
+            text-align: center;
+            color: var(--accent-color);
+        }
+
+        /* Status and Indicator Styles */
+        #status-indicator {
+            text-align: center;
+            margin-bottom: 15px; /* Spacing below status */
+            display: flex; /* Align indicator and text */
+            justify-content: center;
+            align-items: center;
+        }
+        #listeningIndicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background-color: #ccc; /* Default inactive color */
+            transition: background-color 0.3s ease;
+        }
+        #listeningIndicator.indicator-active {
+            background-color: var(--listening-color);
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+        #status {
+            font-weight: bold;
+            color: var(--info-color);
+        }
+
+        /* Language Selection Styles */
+        #language-select-div {
+            text-align: center;
+            margin-bottom: 20px; /* Spacing below dropdown */
+        }
+        #languageSelect {
+            padding: 5px 8px;
+            font-size: 0.9em;
+            border-radius: 4px;
+            border: 1px solid var(--border-color);
+        }
+
+
+        /* Controls Styles */
+        #controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #controls button {
+            padding: 10px 20px;
+            font-size: 1em;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 5px;
+            border: none;
+            color: white;
+        }
+        #startBtn { background-color: var(--success-color); }
+        #stopBtn { background-color: var(--error-color); }
+        #clearBtn { background-color: var(--info-color); } /* Style for Clear button */
+
+        #startBtn:disabled, #stopBtn:disabled, #clearBtn:disabled { /* Add clearBtn to disabled styles */
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        /* Output Area Styles */
+        #output {
+            border: 1px solid var(--border-color);
+            min-height: 200px;
+            padding: 15px;
+            background-color: #fdfdfd;
+            border-radius: 5px;
+            margin-top: 20px;
+            white-space: pre-wrap; /* Allows wrapping and preserves line breaks */
+            overflow-y: auto; /* Add scroll if needed */
+            max-height: 55vh; /* Adjusted height slightly */
+        }
+        #output p {
+             margin: 0 0 0.8em 0; /* Spacing between utterances */
+             padding: 5px;
+             border-radius: 3px;
+             transition: background-color 0.3s ease;
+        }
+        #output p.interim { /* Style for interim results */
+            color: #666;
+            background-color: #f0f0f0;
+            font-style: italic;
+        }
+
+        /* Pulse Animation for Indicator */
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Speech-to-Text</h1>
+
+        <!-- Status and Listening Indicator -->
+        <div id="status-indicator">
+             <span id="listeningIndicator" class="indicator-inactive"></span> <!-- Visual Indicator -->
+             <span id="status">Status: Ready</span>
+        </div>
+
+
+        <!-- Language Selection -->
+        <div id="language-select-div">
+             <label for="languageSelect">Language:</label>
+             <select id="languageSelect">
+                 <!-- Options will be added by JavaScript -->
+             </select>
+        </div>
+
+        <!-- Controls -->
+        <div id="controls">
+            <button id="startBtn">Start Listening</button>
+            <button id="stopBtn" disabled>Stop Listening</button>
+            <button id="clearBtn">Clear Transcript</button> <!-- Added Clear Button -->
+        </div>
+
+        <!-- Output Area -->
+        <div id="output">
+            <p><em>(Transcribed text will appear here...)</em></p>
+        </div>
+    </div>
+
+    <script>
+        // JavaScript Logic Embedded Here
+
+        // --- DOM Elements ---
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const clearBtn = document.getElementById('clearBtn'); // Added
+        const statusDiv = document.getElementById('status');
+        const outputDiv = document.getElementById('output');
+        const languageSelect = document.getElementById('languageSelect'); // Added
+        const listeningIndicator = document.getElementById('listeningIndicator'); // Added
+
+        // --- Speech Recognition Setup ---
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        let recognition;
+        let isRecognizing = false;
+        let currentParagraph = null; // Reference to the <p> element being updated
+
+        // --- Language Options ---
+        const languages = [
+            { code: 'en-US', name: 'English (US)' },
+            { code: 'en-GB', name: 'English (UK)' },
+            { code: 'es-ES', name: 'Español (España)' },
+            { code: 'es-MX', name: 'Español (México)' },
+            { code: 'fr-FR', name: 'Français' },
+            { code: 'de-DE', name: 'Deutsch' },
+            { code: 'it-IT', name: 'Italiano' },
+            { code: 'ja-JP', name: '日本語' },
+            { code: 'pt-BR', name: 'Português (Brasil)' }
+            // Add more languages if needed
+        ];
+        let selectedLanguage = languages[0].code; // Default to first language
+
+        // --- Populate Language Dropdown ---
+        function populateLanguages() {
+            languages.forEach(lang => {
+                const option = document.createElement('option');
+                option.value = lang.code;
+                option.textContent = lang.name;
+                languageSelect.appendChild(option);
+            });
+            languageSelect.value = selectedLanguage; // Set default selection
+        }
+
+        // --- Initialization ---
+        window.onload = () => {
+            populateLanguages(); // Populate dropdown on load
+            if (!SpeechRecognition) {
+                // Handle unsupported browser early
+                statusDiv.textContent = 'Status: Error - Speech Recognition not supported.';
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+                clearBtn.disabled = true;
+                languageSelect.disabled = true;
+                listeningIndicator.style.backgroundColor = 'var(--error-color)'; // Show error on indicator
+                outputDiv.innerHTML = '<p><em>Sorry, your browser does not support the Web Speech API. Try Chrome, Edge, or Safari (iOS 14.1+).</em></p>';
+                return; // Stop further initialization
+            }
+
+            // Setup Recognition if supported
+            setupRecognition();
+            setStatus('Ready'); // Set initial status
+            // Initial state for clear button
+            clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em'));
+        };
+
+        // --- Setup Recognition Function ---
+        function setupRecognition() {
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = selectedLanguage; // Set initial language
+
+            // --- Event Handlers ---
+            recognition.onstart = () => {
+                isRecognizing = true;
+                setStatus('Listening...');
+                listeningIndicator.classList.remove('indicator-inactive'); // Make indicator visible
+                listeningIndicator.classList.add('indicator-active'); // Start animation
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                clearBtn.disabled = true; // Disable clear while listening
+                languageSelect.disabled = true; // Disable language change while listening
+                console.log('Speech recognition started');
+                // Clear placeholder if present
+                 const placeholder = outputDiv.querySelector('em');
+                 if (placeholder && outputDiv.children.length === 1 && outputDiv.firstChild === placeholder.parentElement) {
+                     outputDiv.innerHTML = '';
+                 }
+                 currentParagraph = null; // Reset current paragraph on new start
+            };
+
+            recognition.onend = () => {
+                isRecognizing = false;
+                setStatus('Stopped / Ready');
+                listeningIndicator.classList.remove('indicator-active'); // Stop animation
+                listeningIndicator.classList.add('indicator-inactive'); // Optional: hide/dim indicator
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em')); // Enable if there's text
+                languageSelect.disabled = false; // Re-enable language change
+                console.log('Speech recognition stopped');
+                // Finalize the last paragraph if it was interim
+                finalizeCurrentParagraph();
+            };
+
+            recognition.onerror = (event) => {
+                isRecognizing = false;
+                console.error('Speech recognition error:', event.error, event.message);
+                setStatus(`Error - ${event.error}`);
+                listeningIndicator.classList.remove('indicator-active');
+                listeningIndicator.classList.add('indicator-inactive');
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em'));
+                languageSelect.disabled = false;
+                // Finalize the last paragraph if it was interim
+                finalizeCurrentParagraphOnError(event.error);
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                let finalTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+
+                if (interimTranscript) {
+                     updateOutput(interimTranscript, true); // isInterim = true
+                }
+                if (finalTranscript) {
+                     updateOutput(finalTranscript.trim(), false); // isInterim = false
+                     currentParagraph = null; // Ready for a new paragraph
+                     clearBtn.disabled = false; // Enable clear button after final result
+                }
+
+                // Scroll output div
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+            };
+        }
+
+
+        // --- Button and Select Controls ---
+        startBtn.onclick = () => {
+            if (!recognition) return;
+            if (isRecognizing) return;
+            try {
+                currentParagraph = null; // Reset paragraph ref
+                recognition.lang = selectedLanguage; // *** Set language BEFORE starting ***
+                recognition.start();
+            } catch (error) {
+                console.error("Error starting speech recognition:", error);
+                setStatus("Error starting.");
+            }
+        };
+
+        stopBtn.onclick = () => {
+            if (!recognition || !isRecognizing) return;
+            try {
+                recognition.stop(); // onend will handle state updates
+            } catch (error) {
+                console.error("Error stopping speech recognition:", error);
+                // Force reset state if stop fails
+                 isRecognizing = false; setStatus("Error stopping."); startBtn.disabled = false; stopBtn.disabled = true; clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em')); languageSelect.disabled = false; finalizeCurrentParagraphOnError("stop_error"); listeningIndicator.classList.remove('indicator-active'); listeningIndicator.classList.add('indicator-inactive');
+            }
+        };
+
+        clearBtn.onclick = () => {
+            outputDiv.innerHTML = '<p><em>(Transcribed text will appear here...)</em></p>'; // Reset with placeholder
+            currentParagraph = null;
+            clearBtn.disabled = true; // Disable button after clearing
+            console.log('Transcript cleared');
+        };
+
+        languageSelect.onchange = () => {
+            selectedLanguage = languageSelect.value;
+            console.log('Language changed to:', selectedLanguage);
+            // If recognition is active, stop and restart it with the new language
+            if (isRecognizing) {
+                console.log('Restarting recognition for new language...');
+                recognition.stop();
+                // Need a slight delay or rely on onend to trigger restart?
+                // For simplicity, let's rely on onend calling finalize and the user clicking start again.
+                // Or, more complex: use a flag and restart in onend.
+                // Simpler approach: Just update the variable. It will be used on the *next* start.
+                // If immediate change is desired:
+                // recognition.onend = () => { ... original onend logic ... ; startBtn.click(); /* Automatically restart */ };
+                // recognition.stop();
+            }
+        };
+
+
+        // --- Helper Functions ---
+        function updateOutput(text, isInterim) {
+            if (!text && isInterim) return; // Don't process empty interim strings
+
+            if (!currentParagraph) { // Need to create a new paragraph
+                currentParagraph = document.createElement('p');
+                // Remove placeholder if it's the only thing there
+                const placeholder = outputDiv.querySelector('em');
+                if (placeholder && outputDiv.children.length === 1 && outputDiv.firstChild === placeholder.parentElement) {
+                    outputDiv.innerHTML = ''; // Clear placeholder before adding real text
+                }
+                outputDiv.appendChild(currentParagraph);
+                console.log("Created new paragraph");
+            }
+
+            currentParagraph.textContent = text; // Update content
+
+            if (isInterim) {
+                currentParagraph.classList.add('interim');
+            } else {
+                currentParagraph.classList.remove('interim');
+                console.log("Finalized paragraph content:", text);
+            }
+        }
+
+        function finalizeCurrentParagraph() {
+             if (currentParagraph && currentParagraph.classList.contains('interim')) {
+                 currentParagraph.classList.remove('interim');
+                 console.log("Finalized paragraph on stop/end");
+             }
+             currentParagraph = null; // Ready for a new one next time
+             // Check if output has content and enable clear button
+             clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em'));
+        }
+
+        function finalizeCurrentParagraphOnError(errorType) {
+             if (currentParagraph && currentParagraph.classList.contains('interim')) {
+                 currentParagraph.classList.remove('interim');
+                 console.log(`Finalized paragraph on error: ${errorType}`);
+             }
+             currentParagraph = null;
+             clearBtn.disabled = (outputDiv.textContent.trim() === '' || !!outputDiv.querySelector('em'));
+        }
+
+        function setStatus(message) {
+            statusDiv.textContent = `Status: ${message}`;
+        }
+
+    </script>
+
+</body>
+</html>
